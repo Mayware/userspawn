@@ -15,3 +15,7 @@ pkg_check_modules(DBUS REQUIRED IMPORTED_TARGET dbus-1)
 add_executable(userspawn main.cpp)
 
 target_link_libraries(userspawn PRIVATE PkgConfig::DBUS)
+
+install(TARGETS userspawn
+    RUNTIME DESTINATION bin
+)
