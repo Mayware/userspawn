@@ -36,7 +36,7 @@ userspawn works in conjunction with (e)logind, and hence, dbus. It listens for u
 For every user addition, a new cgroup is created for that user and `.userspawnrc` is spawned into that cgroup.
 Upon user removal, that cgroup is then cleaned up, as triggered by (e)logind.
 
-## MISC
+## Misc
 If you encounter any issues, feel free to make a github issue. Similarly such for feature requests, although the scope is limited.
 
 Licensed under `LGPL-3.0-or-later`, with the `LGPL-3.0 Linking Exception`.

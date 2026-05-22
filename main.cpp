@@ -62,7 +62,7 @@ std::filesystem::path get_cgroup(dbus_uint32_t uid) {
 
 void end_cgroup(const std::filesystem::path& cgroup) {
 	debug_print("Ending cgroup {}", cgroup.c_str());
-	// Just a data dump we can (void)write to; see usage later on for clarification
+	// Just a data dump we can write to; see usage later on for clarification
 	static char dump[sizeof(inotify_event) + NAME_MAX + 1];
 
 	// Tell the cgroup to kys
@@ -75,7 +75,7 @@ void end_cgroup(const std::filesystem::path& cgroup) {
 	kill_file << "1";
 	kill_file.flush();
 	if (!kill_file) {
-		std::println("Failed to (void)write to cgroup kill file! Unable to cleanup! {}, {}", cgroup.string(), strerror(errno));
+		std::println("Failed to write to cgroup kill file! Unable to cleanup! {}, {}", cgroup.string(), strerror(errno));
 		return;
 	}
 	kill_file.close();
@@ -195,19 +195,19 @@ void start_user(dbus_uint32_t uid) {
 		// Drop permissions
 		// Also gives supplementary groups, beyond just the primary
 		if (initgroups(entry->pw_name, entry->pw_gid) != 0) {
-			(void)write(STDERR_FILENO, "Initgroups failed\n", 18);
+			write(STDERR_FILENO, "Initgroups failed\n", 18);
 			_exit(1);
 		}
 		if (setgid(entry->pw_gid) != 0) {
-			(void)write(STDERR_FILENO, "Setgid failed\n", 14);
+			write(STDERR_FILENO, "Setgid failed\n", 14);
 			_exit(1);
 		}
 		if (setuid(entry->pw_uid) != 0) {
-			(void)write(STDERR_FILENO, "Setuid failed\n", 14);
+			write(STDERR_FILENO, "Setuid failed\n", 14);
 			_exit(1);
 		}
 		if (geteuid() != entry->pw_uid || getegid() != entry->pw_gid) {
-			(void)write(STDERR_FILENO, "Failed to drop privileges\n", 26);
+			write(STDERR_FILENO, "Failed to drop privileges\n", 26);
 			_exit(1);
 		}
 
@@ -215,13 +215,13 @@ void start_user(dbus_uint32_t uid) {
 		execle(script_path.c_str(), ".userspawnrc", nullptr, env);
 
 		// Will only run, if execl somehow fails
-		(void)write(STDERR_FILENO, "Failed to exec user", 15);
-		(void)write(STDERR_FILENO, script_path.c_str(), script_path.size());
-		(void)write(STDERR_FILENO, "! Make sure it's chmod +x'ed: ", 30);
+		write(STDERR_FILENO, "Failed to exec user", 15);
+		write(STDERR_FILENO, script_path.c_str(), script_path.size());
+		write(STDERR_FILENO, "! Make sure it's chmod +x'ed: ", 30);
 		// https://man7.org/linux/man-pages/man3/strerror.3.html, says its thread safe
 		const char* error = strerrordesc_np(errno);
-		(void)write(STDERR_FILENO, error, strlen(error));
-		(void)write(STDERR_FILENO, "\n", 1);
+		write(STDERR_FILENO, error, strlen(error));
+		write(STDERR_FILENO, "\n", 1);
 		_exit(1);
 	} else if (pid == -1) {
 		std::println("[ERROR] Clone3 failed: {}", strerror(errno));
