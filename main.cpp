@@ -1,10 +1,30 @@
 #include <cassert>
+#include <cerrno>
+#include <csignal>
+#include <cstring>
 #include <dbus/dbus.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <limits.h>
+#include <linux/sched.h>
+#include <pwd.h>
 #include <sys/inotify.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 import std;
+
+#ifdef NDEBUG
+constexpr bool debug = false;
+#else
+constexpr bool debug = true;
+#endif
+
+template<typename... Arguments>
+void debug_print(std::format_string<Arguments...> to_format, Arguments&&... arguments) {
+	if constexpr (debug) {
+		std::println("[DEBUG] {}", std::format(to_format, std::forward<Arguments>(arguments)...));
+	}
+}
 
 void get_error(DBusError& error) {
 	std::println("[DBUS ERROR] {} {}", error.name, error.message);
@@ -19,16 +39,19 @@ void check_fail_error(DBusError& error) {
 }
 
 std::tuple<int, const char*> get_user(DBusMessage* message) {
+	debug_print("Getting user from dbus message");
 	DBusMessageIter iter;
 	dbus_message_iter_init(message, &iter);
+	debug_print("Initialised iter");
 
 	dbus_uint32_t uid;
 	const char* path;
 
 	dbus_message_iter_get_basic(&iter, &uid);
 	dbus_message_iter_next(&iter);
+	debug_print("Got uid");
 	dbus_message_iter_get_basic(&iter, &path);
-	dbus_message_unref(message);
+	debug_print("Got path");
 
 	return std::tuple(uid, path);
 }
@@ -38,11 +61,25 @@ std::filesystem::path get_cgroup(dbus_uint32_t uid) {
 }
 
 void end_cgroup(const std::filesystem::path& cgroup) {
+	debug_print("Ending cgroup {}", cgroup.c_str());
 	// Just a data dump we can write to; see usage later on for clarification
 	static char dump[sizeof(inotify_event) + NAME_MAX + 1];
 
 	// Tell the cgroup to kys
-	std::ofstream(cgroup / "cgroup.kill") << "1";
+	debug_print("Killing cgroup");
+	std::ofstream kill_file(cgroup / "cgroup.kill");
+	if (!kill_file) {
+		std::println("Failed to open cgroup kill file! Unable to cleanup! {}, {}", cgroup.string(), strerror(errno));
+		return;
+	}
+	kill_file << "1";
+	kill_file.flush();
+	if (!kill_file) {
+		std::println("Failed to write to cgroup kill file! Unable to cleanup! {}, {}", cgroup.string(), strerror(errno));
+		return;
+	}
+	kill_file.close();
+	debug_print("Wrote kill");
 
 	// Yield until the cgroup's processes are cleaned up
 	// populated 0 will appear in the file, when it has finished
@@ -50,6 +87,7 @@ void end_cgroup(const std::filesystem::path& cgroup) {
 	auto events = cgroup / "cgroup.events";
 	int fd = inotify_init();
 	inotify_add_watch(fd, events.c_str(), IN_MODIFY);
+	debug_print("Added watcher");
 
 	while (true) {
 		// Check if populated 0 is set
@@ -60,6 +98,7 @@ void end_cgroup(const std::filesystem::path& cgroup) {
 			// The populated field is recursive, i.e, it will only be 0 when all the child cgroups are too
 			// https://www.kernel.org/doc/html/v4.18/admin-guide/cgroup-v2.html#un-populated-notification
 			if (line == "populated 0") {
+				debug_print("No more children");
 				goto done;
 			}
 		}
@@ -67,14 +106,16 @@ void end_cgroup(const std::filesystem::path& cgroup) {
 		// Blocks until cgroup.events is changed, hence this isn't a busy loop
 		// We don't need this data, but we need to read it into a buffer, for correct yielding
 		// https://man7.org/linux/man-pages/man7/inotify.7.html
+		debug_print("Still has children, yielding");
 		read(fd, dump, sizeof(dump));
 	}
 done:
 	close(fd);
+	debug_print("Closed inotify fd");
 
-    // Cgroups can only be removed, if they have no child cgroups
-    // Therefore, we must remove them bottom up
-    // https://man7.org/linux/man-pages/man7/cgroups.7.html
+	// Cgroups can only be removed, if they have no child cgroups
+	// Therefore, we must remove them bottom up
+	// https://man7.org/linux/man-pages/man7/cgroups.7.html
 	std::vector<std::filesystem::path> cgroups;
 	for (auto& entry : std::filesystem::recursive_directory_iterator(cgroup)) {
 		if (entry.is_directory()) {
@@ -83,22 +124,123 @@ done:
 	}
 	std::ranges::reverse(cgroups);
 	for (auto& subcgroup : cgroups) {
+		debug_print("Removing subcgroup {}", subcgroup.c_str());
 		std::filesystem::remove(subcgroup);
 	}
 	std::filesystem::remove(cgroup);
+	debug_print("Removed primary cgroup {}", cgroup.c_str());
 }
 
 void start_user(dbus_uint32_t uid) {
 	auto cgroup = get_cgroup(uid);
 	if (std::filesystem::exists(cgroup)) {
-		std::println("[WARNING] A start user request was received, but the cgroup already exists. This should never occur, perhaps a cleanup was unable to run before? It will be regenerated.");
+		std::println("[WARNING] A start user request was received, but the cgroup already exists. "
+					 "This should never occur, perhaps a cleanup was unable to run before? It will be regenerated.");
+		end_cgroup(cgroup);
 	}
+
+	// Usually this is called pw,but that doesn't really make sense anymore
+	passwd* entry = getpwuid(uid);
+	debug_print("Got entry (pw)");
+	auto script_path = std::string(entry->pw_dir) + "/.userspawnrc";
+	if (!std::filesystem::exists(script_path)) {
+		std::println("[ERROR] The path {} doesn't exist - please create "
+					 " .userspawnrc and specify what you want launched!",
+			script_path);
+		return;
+	}
+
+	// Create the env vars
+	std::string home_env = std::format("HOME={}", entry->pw_dir);
+	std::string user_env = std::format("USER={}", entry->pw_name);
+	std::string logname_env = std::format("LOGNAME={}", entry->pw_name);
+	std::string shell_env = std::format("SHELL={}", entry->pw_shell);
+	std::string runtime_env = std::format("XDG_RUNTIME_DIR=/run/user/{}", uid);
+	debug_print("Got env vars");
+
+	const char* env[] = {
+		home_env.c_str(),
+		user_env.c_str(),
+		logname_env.c_str(),
+		shell_env.c_str(),
+		runtime_env.c_str(),
+		nullptr,
+	};
+
+	std::filesystem::create_directory(cgroup);
+	chown(cgroup.c_str(), entry->pw_uid, entry->pw_gid);
+	int cgroup_fd = open(cgroup.c_str(), O_RDONLY | O_DIRECTORY);
+	debug_print("Created, chown'ed and opened cgroup");
+
+	// Clone directly into the cgroup
+	clone_args args = {};
+	args.flags = CLONE_INTO_CGROUP;
+	args.cgroup = cgroup_fd;
+	// Should already be 0-init, but just making this explicit
+	// as quoted 'If no signal (i.e., zero) is specified, then the
+	// parent process is not signaled when the child terminates.'
+	// This shouldn't(?) matter anyway, since we set sigchild to sig_ign,
+	// but can't hurt
+	args.exit_signal = 0;
+	debug_print("About to syscall clone into");
+
+	// https://man7.org/linux/man-pages/man2/clone.2.html
+	pid_t pid = syscall(SYS_clone3, &args, sizeof(args));
+	if (pid == 0) {
+		// Drop permissions
+		// Also gives supplementary groups, beyond just the primary
+		if (initgroups(entry->pw_name, entry->pw_gid) != 0) {
+			write(STDERR_FILENO, "Initgroups failed\n", 18);
+			_exit(1);
+		}
+		if (setgid(entry->pw_gid) != 0) {
+			write(STDERR_FILENO, "Setgid failed\n", 14);
+			_exit(1);
+		}
+		if (setuid(entry->pw_uid) != 0) {
+			write(STDERR_FILENO, "Setuid failed\n", 14);
+			_exit(1);
+		}
+		if (geteuid() != entry->pw_uid || getegid() != entry->pw_gid) {
+			write(STDERR_FILENO, "Failed to drop privileges\n", 26);
+			_exit(1);
+		}
+
+		// Actually execute their script
+		execle(script_path.c_str(), ".userspawnrc", nullptr, env);
+
+		// Will only run, if execl somehow fails
+		write(STDERR_FILENO, "Failed to exec user", 15);
+		write(STDERR_FILENO, script_path.c_str(), script_path.size());
+		write(STDERR_FILENO, "! Make sure it's chmod +x'ed: ", 30);
+		// https://man7.org/linux/man-pages/man3/strerror.3.html, says its thread safe
+		const char* error = strerrordesc_np(errno);
+		write(STDERR_FILENO, error, strlen(error));
+		write(STDERR_FILENO, "\n", 1);
+		_exit(1);
+	} else if (pid == -1) {
+		std::println("[ERROR] Clone3 failed: {}", strerror(errno));
+		return;
+	}
+	close(cgroup_fd);
+	std::println("[LOG] Started userspawnrc for user {}", uid);
 }
 
 void end_user(dbus_uint32_t uid) {
+	auto cgroup = get_cgroup(uid);
+	if (!std::filesystem::exists(cgroup)) {
+		end_cgroup(cgroup);
+	} else {
+		std::println("[LOG] Not cleaning up cgroup {} for uid {}, as it didn't exist!", cgroup.c_str(), uid);
+	}
+	std::println("[LOG] Cleaned up {} for uid {}", cgroup.c_str(), uid);
 }
 
 int main() {
+	// Abandon our offspring (https://stackoverflow.com/a/7171836)
+	// Essentially, this means our zombies are auto-reaped
+	signal(SIGCHLD, SIG_IGN);
+
 	// Not many examples of using libdbus itself, but this was
 	// good; http://www.matthew.ath.cx/articles/dbus
 	DBusError error;
@@ -159,17 +301,17 @@ int main() {
 		dbus_message_iter_recurse(&array_iter, &struct_iter);
 
 		dbus_uint32_t uid;
-		const char* username;
-		const char* path;
+		// const char* username;
+		// const char* path;
 
 		dbus_message_iter_get_basic(&struct_iter, &uid);
 		dbus_message_iter_next(&struct_iter);
-		dbus_message_iter_get_basic(&struct_iter, &username);
-		dbus_message_iter_next(&struct_iter);
-		dbus_message_iter_get_basic(&struct_iter, &path);
-		std::println("uid={} username={} path={}", uid, username, path);
+		// dbus_message_iter_get_basic(&struct_iter, &username);
+		// dbus_message_iter_next(&struct_iter);
+		// dbus_message_iter_get_basic(&struct_iter, &path);
 
 		dbus_message_iter_next(&array_iter);
+		start_user(uid);
 	}
 	dbus_message_unref(reply);
 
@@ -179,19 +321,38 @@ int main() {
 	// callback / automatic dispatch appraoch, since I don't like my event loop being stolen
 	// We'll never see the end of this loop anyway, since exit on bus disconnection is on
 	while (dbus_connection_read_write(connection, -1)) {
-		// https://dbus.freedesktop.org/doc/api/html/group__DBusConnection.html#ga1e40d994ea162ce767e78de1c4988566
-		DBusMessage* message = dbus_connection_pop_message(connection);
-		if (message == nullptr) {
-			continue;
-		}
 
-		bool should_remove = false;
-		// Kept this to just show, we can assume if it wasn't removed, it was new, which is default
-		// if (dbus_message_is_signal(message, "org.freedesktop.login1.Manager", "UserNew")) {
-		if (dbus_message_is_signal(message, "org.freedesktop.login1.Manager", "UserRemoved")) {
-			should_remove = true;
-		}
+        // Multiple messages may arrive at once, so parse them all, until there is no more
+        // WIthout this, we just receive the name acquired event, then do nothing
+		debug_print("Received a dbus message");
+		while (true) {
+			// https://dbus.freedesktop.org/doc/api/html/group__DBusConnection.html#ga1e40d994ea162ce767e78de1c4988566
+			DBusMessage* message = dbus_connection_pop_message(connection);
+			if (message == nullptr) {
+				break;
+			}
 
-		auto user = get_user(message);
+			bool should_remove = false;
+			if (dbus_message_is_signal(message, "org.freedesktop.login1.Manager", "UserRemoved")) {
+				should_remove = true;
+			} else if (!dbus_message_is_signal(message, "org.freedesktop.login1.Manager", "UserNew")) {
+				debug_print("Skipping message: type={} interface={} member={}",
+					dbus_message_get_type(message),
+					dbus_message_get_interface(message) ?: "null",
+					dbus_message_get_member(message) ?: "null");
+				dbus_message_unref(message);
+				continue;
+			}
+
+			debug_print("Should remove was {}", should_remove);
+			auto user = get_user(message);
+
+			if (should_remove) {
+				end_user(std::get<0>(user));
+			} else {
+				start_user(std::get<0>(user));
+			}
+			dbus_message_unref(message);
+		}
 	}
 }
