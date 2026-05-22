@@ -21,7 +21,11 @@ case "$1" in
             -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON
         ;;
 
+    godspeed)
+        cmake -B build -G Ninja
+        ;;
+
     *)
-        echo -e "Invalid arg, options:\n\nlsp) Builds with clang, to get clangd lsp support\nrelease) Builds with system default & LTO\n\neg. gen.sh lsp"
+        echo -e "Invalid arg, options:\n\nlsp) Builds with clang, to get clangd lsp support\nrelease) Builds with system default & LTO\ngodspeed) Nothing special, all defaults you provide\n\neg. gen.sh lsp"
         ;;
 esac
