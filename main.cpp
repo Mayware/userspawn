@@ -62,7 +62,7 @@ std::filesystem::path get_cgroup(dbus_uint32_t uid) {
 
 void end_cgroup(const std::filesystem::path& cgroup) {
 	debug_print("Ending cgroup {}", cgroup.c_str());
-	// Just a data dump we can write to; see usage later on for clarification
+	// Just a data dump we can (void)write to; see usage later on for clarification
 	static char dump[sizeof(inotify_event) + NAME_MAX + 1];
 
 	// Tell the cgroup to kys
@@ -75,7 +75,7 @@ void end_cgroup(const std::filesystem::path& cgroup) {
 	kill_file << "1";
 	kill_file.flush();
 	if (!kill_file) {
-		std::println("Failed to write to cgroup kill file! Unable to cleanup! {}, {}", cgroup.string(), strerror(errno));
+		std::println("Failed to (void)write to cgroup kill file! Unable to cleanup! {}, {}", cgroup.string(), strerror(errno));
 		return;
 	}
 	kill_file.close();
@@ -155,6 +155,7 @@ void start_user(dbus_uint32_t uid) {
 	std::string user_env = std::format("USER={}", entry->pw_name);
 	std::string logname_env = std::format("LOGNAME={}", entry->pw_name);
 	std::string shell_env = std::format("SHELL={}", entry->pw_shell);
+	std::string path_env = "PATH=/usr/local/sbin:/usr/local/bin:/usr/bin";
 	std::string runtime_env = std::format("XDG_RUNTIME_DIR=/run/user/{}", uid);
 	debug_print("Got env vars");
 
@@ -163,12 +164,16 @@ void start_user(dbus_uint32_t uid) {
 		user_env.c_str(),
 		logname_env.c_str(),
 		shell_env.c_str(),
+		path_env.c_str(),
 		runtime_env.c_str(),
 		nullptr,
 	};
 
 	std::filesystem::create_directory(cgroup);
-	chown(cgroup.c_str(), entry->pw_uid, entry->pw_gid);
+	if (chown(cgroup.c_str(), entry->pw_uid, entry->pw_gid) != 0) {
+        std::println("[ERROR] Failed to chown cgroup {}: {}", cgroup.c_str(), strerror(errno));
+        return;
+    }
 	int cgroup_fd = open(cgroup.c_str(), O_RDONLY | O_DIRECTORY);
 	debug_print("Created, chown'ed and opened cgroup");
 
@@ -190,19 +195,19 @@ void start_user(dbus_uint32_t uid) {
 		// Drop permissions
 		// Also gives supplementary groups, beyond just the primary
 		if (initgroups(entry->pw_name, entry->pw_gid) != 0) {
-			write(STDERR_FILENO, "Initgroups failed\n", 18);
+			(void)write(STDERR_FILENO, "Initgroups failed\n", 18);
 			_exit(1);
 		}
 		if (setgid(entry->pw_gid) != 0) {
-			write(STDERR_FILENO, "Setgid failed\n", 14);
+			(void)write(STDERR_FILENO, "Setgid failed\n", 14);
 			_exit(1);
 		}
 		if (setuid(entry->pw_uid) != 0) {
-			write(STDERR_FILENO, "Setuid failed\n", 14);
+			(void)write(STDERR_FILENO, "Setuid failed\n", 14);
 			_exit(1);
 		}
 		if (geteuid() != entry->pw_uid || getegid() != entry->pw_gid) {
-			write(STDERR_FILENO, "Failed to drop privileges\n", 26);
+			(void)write(STDERR_FILENO, "Failed to drop privileges\n", 26);
 			_exit(1);
 		}
 
@@ -210,13 +215,13 @@ void start_user(dbus_uint32_t uid) {
 		execle(script_path.c_str(), ".userspawnrc", nullptr, env);
 
 		// Will only run, if execl somehow fails
-		write(STDERR_FILENO, "Failed to exec user", 15);
-		write(STDERR_FILENO, script_path.c_str(), script_path.size());
-		write(STDERR_FILENO, "! Make sure it's chmod +x'ed: ", 30);
+		(void)write(STDERR_FILENO, "Failed to exec user", 15);
+		(void)write(STDERR_FILENO, script_path.c_str(), script_path.size());
+		(void)write(STDERR_FILENO, "! Make sure it's chmod +x'ed: ", 30);
 		// https://man7.org/linux/man-pages/man3/strerror.3.html, says its thread safe
 		const char* error = strerrordesc_np(errno);
-		write(STDERR_FILENO, error, strlen(error));
-		write(STDERR_FILENO, "\n", 1);
+		(void)write(STDERR_FILENO, error, strlen(error));
+		(void)write(STDERR_FILENO, "\n", 1);
 		_exit(1);
 	} else if (pid == -1) {
 		std::println("[ERROR] Clone3 failed: {}", strerror(errno));
@@ -237,6 +242,11 @@ void end_user(dbus_uint32_t uid) {
 }
 
 int main() {
+	if (geteuid() != 0) {
+		std::println("Userspawn must be ran as root!");
+		std::exit(1);
+	}
+
 	// Abandon our offspring (https://stackoverflow.com/a/7171836)
 	// Essentially, this means our zombies are auto-reaped
 	signal(SIGCHLD, SIG_IGN);
@@ -322,8 +332,8 @@ int main() {
 	// We'll never see the end of this loop anyway, since exit on bus disconnection is on
 	while (dbus_connection_read_write(connection, -1)) {
 
-        // Multiple messages may arrive at once, so parse them all, until there is no more
-        // WIthout this, we just receive the name acquired event, then do nothing
+		// Multiple messages may arrive at once, so parse them all, until there is no more
+		// WIthout this, we just receive the name acquired event, then do nothing
 		debug_print("Received a dbus message");
 		while (true) {
 			// https://dbus.freedesktop.org/doc/api/html/group__DBusConnection.html#ga1e40d994ea162ce767e78de1c4988566
