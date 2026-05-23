@@ -233,7 +233,7 @@ void start_user(dbus_uint32_t uid) {
 
 void end_user(dbus_uint32_t uid) {
 	auto cgroup = get_cgroup(uid);
-	if (!std::filesystem::exists(cgroup)) {
+	if (std::filesystem::exists(cgroup)) {
 		end_cgroup(cgroup);
 	} else {
 		std::println("[LOG] Not cleaning up cgroup {} for uid {}, as it didn't exist!", cgroup.c_str(), uid);
