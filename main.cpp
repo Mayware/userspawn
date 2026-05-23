@@ -144,10 +144,13 @@ void start_user(dbus_uint32_t uid) {
 	debug_print("Got entry (pw)");
 	auto script_path = std::string(entry->pw_dir) + "/.userspawnrc";
 	if (!std::filesystem::exists(script_path)) {
-		std::println("[ERROR] The path {} doesn't exist - please create "
-					 " .userspawnrc and specify what you want launched!",
-			script_path);
-		return;
+		script_path = std::string(entry->pw_dir) + "/.config/userspawn/userspawnrc";
+		if (!std::filesystem::exists(script_path)) {
+			std::println("[ERROR] The path {} doesn't exist - please create "
+						 " .userspawnrc and specify what you want launched!",
+				script_path);
+			return;
+		}
 	}
 
 	// Create the env vars
@@ -171,9 +174,9 @@ void start_user(dbus_uint32_t uid) {
 
 	std::filesystem::create_directory(cgroup);
 	if (chown(cgroup.c_str(), entry->pw_uid, entry->pw_gid) != 0) {
-        std::println("[ERROR] Failed to chown cgroup {}: {}", cgroup.c_str(), strerror(errno));
-        return;
-    }
+		std::println("[ERROR] Failed to chown cgroup {}: {}", cgroup.c_str(), strerror(errno));
+		return;
+	}
 	int cgroup_fd = open(cgroup.c_str(), O_RDONLY | O_DIRECTORY);
 	debug_print("Created, chown'ed and opened cgroup");
 
@@ -212,7 +215,7 @@ void start_user(dbus_uint32_t uid) {
 		}
 
 		// Actually execute their script
-		execle(script_path.c_str(), ".userspawnrc", nullptr, env);
+		execle(script_path.c_str(), "userspawnrc", nullptr, env);
 
 		// Will only run, if execl somehow fails
 		write(STDERR_FILENO, "Failed to exec user", 15);
