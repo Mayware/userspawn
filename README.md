@@ -20,6 +20,7 @@ log-buffer-size = 1000000 # 1 MB
 ```
 
 Following this, create `~/.userspawnrc` (i.e. in your home directory), and add what you need.
+Alternatively, you can also create it at `~/.config/userspawn/userspawnrc`.
 For example, for dinit, you may want:
 
 ```bash
