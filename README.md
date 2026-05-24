@@ -28,6 +28,8 @@ For example, for dinit, you may want:
 dinit --user
 ```
 
+Remember to `chmod +x .userspawnrc`.
+
 Now, enable the service you previously created, and it should be working!
 If something goes wrong, try running the program manually as root in another shell, to see what is going wrong.
 You can also compile in debug mode, to get additional debug messages.
