@@ -1,5 +1,5 @@
 # userspawn
-userspawn runs an executable, you specify at ~/.userspawnrc. This could be a bash script, or anything else you want!
+userspawn runs an executable, you specify, when a user logs in. This could be a bash script, or anything else you want!
 This can be used to launch a user instance of your init system.
 
 ## Installation & Usage
@@ -20,7 +20,8 @@ log-buffer-size = 1000000 # 1 MB
 ```
 
 Following this, create `~/.userspawnrc` (i.e. in your home directory), and add what you need.
-Alternatively, you can also create it at `~/.config/userspawn/userspawnrc`.
+Alternatively, you can also create it at `~/.config/userspawn/userspawnrc`
+For a default system-wide config, you can also create `/etc/xdg/userspawn/userspawnrc`.
 For example, for dinit, you may want:
 
 ```bash

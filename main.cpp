@@ -142,16 +142,22 @@ void start_user(dbus_uint32_t uid) {
 	// Usually this is called pw,but that doesn't really make sense anymore
 	passwd* entry = getpwuid(uid);
 	debug_print("Got entry (pw)");
-	auto script_path = std::string(entry->pw_dir) + "/.userspawnrc";
-	if (!std::filesystem::exists(script_path)) {
-		script_path = std::string(entry->pw_dir) + "/.config/userspawn/userspawnrc";
-		if (!std::filesystem::exists(script_path)) {
-			std::println("[ERROR] The path {} doesn't exist - please create "
-						 " .userspawnrc and specify what you want launched!",
-				script_path);
-			return;
-		}
+	const std::array path_candidates = {
+		std::string(entry->pw_dir) + "/.userspawnrc",
+		std::string(entry->pw_dir) + "/.config/userspawn/userspawnrc",
+		std::string("/etc/xdg/userspawn/userspawnrc"),
+	};
+
+	auto it = std::ranges::find_if(path_candidates, [](const auto& path) {
+		return std::filesystem::exists(path);
+	});
+
+	if (it == path_candidates.end()) {
+		std::println("[ERROR] userspawnrc does not exist!");
+		return;
 	}
+	auto script_path = *it;
+    debug_print("Chosen path {}", script_path);
 
 	// Create the env vars
 	std::string home_env = std::format("HOME={}", entry->pw_dir);
