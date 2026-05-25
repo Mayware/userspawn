@@ -26,7 +26,7 @@ For example, for dinit, you may want:
 
 ```bash
 #!/bin/bash
-dinit --user
+exec dinit --user
 ```
 
 Remember to `chmod +x .userspawnrc`.
