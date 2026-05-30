@@ -2,10 +2,21 @@
 userspawn runs an executable, you specify, when a user logs in. This could be a bash script, or anything else you want!
 This can be used to launch a user instance of your init system.
 
-## Installation & Usage
-Install userspawn from one of the repos listed below:
+## Automated Installation
+The packages provide everything for you - simply install the package and enable the service, or follow their instructions.  
+You do not need to do anything beyond this.
+| Init System | Package |
+|-------------|---------|
+| Dinit | [userspawn-dinit](https://packages.artixlinux.org/packages/system/any/userspawn-dinit/) |
+| Runit | [userspawn-runit](https://packages.artixlinux.org/packages/system/x86_64/userspawn-runit/) |
 
-[Arch User Repository](https://aur.archlinux.org/packages/userspawn-git)
+## Manual Installation
+If your preferred init system does not have a specific package, you can instead manually set it up for your system.
+
+| Provider | Package |
+|--------------|---------|
+| AUR | [userspawn-git](https://aur.archlinux.org/packages/userspawn-git) |
+| Artix | [userspawn](https://packages.artixlinux.org/packages/system/x86_64/userspawn/) |
 
 Create the relevant startup script. Keep in mind, userspawn must be ran as root.
 For example, for dinit, place the following in `/usr/lib/dinit.d/userspawn`:
